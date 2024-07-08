@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html>
+    <head>
+     <meta charset="utf8">
+     <title>远程在线识别</title>
+     <script>
+    //定义一个mediaStream对象  
+    let mediaStream;
+    // 判断浏览器是否支持HTML5 Canvas
+	 window.onload = function () {
+		try {
+		//动态创建一个canvas元 ，并获取他2Dcontext。如果出现异常则表示不支持 document.createElement("canvas").getContext("2d");
+		document.getElementById("support").innerHTML = "浏览器支持HTML5 CANVAS";
+		}
+		catch (e) {
+		document.getElementByIdx("support").innerHTML = "浏览器不支持HTML5 CANVAS";
+		}
+	};
+
+function getMedia(){
+    var  canvas = document.getElementById("canvas"),
+         context = canvas.getContext("2d"),
+         video = document.getElementById("video"),
+		 videoObj = { "video": true },
+         errBack = function (error) {
+			console.log("Video capture error: ", error.code);
+		    };  
+    setInterval(function(){
+		context.drawImage(video, 0, 0, 480, 320)
+		},100);  
+
+    if(navigator.getUserMedia){
+        navigator.getUserMedia(videoObj, function (stream) {
+                mediaStream=stream;
+				video.srcObject  = stream;
+				video.play();
+			}, errBack);
+    } else if(navigator.webkitGetUserMedia)  {
+        navigator.webkitGetUserMedia(videoObj, function (stream) {
+                mediaSteam=stream;
+				video.src = window.webkitURL.createObjectURL(stream);
+				video.play();
+			}, errBack);
+          }      
+}
+//停止媒体播放
+function stopMedia(){
+    if(mediaStream){
+      mediaStream.getTracks().forEach(function(track) {
+            track.stop(); // 停止所有跟踪
+        });
+    }  
+    mediaStream=null;  //重置stream
+}  
+    
+function capture(){
+    const canvas=document.getElementById("canvas");
+    const dataURL=canvas.toDataURL('image/jpeg');
+    fetch('/upload_canvas',{
+        method: 'POST',
+        headers: {
+            'Content-Type':'application/json'
+        },
+        body: JSON.stringify({image: dataURL})
+    }).then(response=>response.json())
+      .then(data=>{
+             document.getElementById('result').innerHTML=data.result
+             console.log('Success',data);
+      })
+      .catch(error=>{
+          console.log('Error:',error)
+      })
+}
+
+function download(){
+   //获取base64格式图像数据 
+   let imgBase64=document.getElementById('canvas').toDataURL('image/jpeg')
+   let alink=document.createElement('a')
+   alink.href=imgBase64
+   alink.download='image.jpg'
+   alink.click()
+}
+</script>
+</head>
+    <body>
+       <div align="center"> 
+        <div id="support"></div>
+        <div>
+            <video id="video" autoplay="autoplay" width="480" height="320" style="display:none;"></video>
+            <canvas  id="canvas"  width="480" height="320"></canvas>
+            <p id="result"></p>
+        </div>     
+        <div>
+            <button onclick="getMedia()">开启摄像头</button> 
+            <button onclick="stopMedia()">关闭摄像头</button>
+            <button onclick="capture()">人脸识别</button> 
+            <button onclick="download()">下载图片</button> 
+        </div>     
+    </div>
+    </body>
+</html>
