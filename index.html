@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>课时登记系统</title>
+    <link rel="stylesheet" href="css/style.css">
+    <!-- 添加SheetJS库用于Excel导出 -->
+    <script src="https://cdn.sheetjs.com/xlsx-0.19.3/package/dist/xlsx.full.min.js"></script>
+    <!-- 引入库用于PdfPdf导出 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <!-- 启动动画 -->
+    <div id="start-animation" class="fullscreen-animation">
+        <div class="animation-content">
+            <h2>课时登记系统</h2>
+            <div class="loading-bar">
+                <div class="progress"></div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="container" style="display:none;">
+        <button id="close-btn" class="close-button">关闭网页</button>
+        <h1>课时登记系统</h1>
+        
+        <div class="tabs">
+            <button class="tab-btn active" data-tab="register">登记</button>
+            <button class="tab-btn" data-tab="statistics">统计</button>
+            <button class="tab-btn" data-tab="charts">图表</button>
+            <button class="tab-btn" data-tab="settings">设置</button>
+            <button class="tab-btn" data-tab="backup">备份</button>
+        </div>
+        
+        <div id="register-tab" class="tab-content active">
+            <div class="form-container">
+                <div class="form-group">
+                    <label for="date">日期：</label>
+                    <input type="date" id="date" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="session">节次：</label>
+                    <select id="session" required>
+                        <option value="">请选择</option>
+                        <option value="12节">12节</option>
+                        <option value="34节">34节</option>
+                        <option value="56节">56节</option>
+                        <option value="晚自习">晚自习</option>               
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="class">班级：</label>
+                    <select id="class" required>
+                        <option value="">请选择</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="course">课程：</label>
+                    <select id="course" required>
+                        <option value="">请选择</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="type">课型：</label>
+                    <select id="type" required>
+                        <option value="">请选择</option>
+                    </select>
+                </div>
+                
+                <button id="save-btn">保存记录</button>
+            </div>
+            
+            <div class="records-container">
+                <h2>已登记课时</h2>
+                <div id="records-list"></div>
+            </div>
+        </div>
+        
+        <div id="statistics-tab" class="tab-content">
+            <div class="statistics-container">
+                <div class="form-container">
+                    <div class="form-group">
+                        <label for="start-date">起始日期：</label>
+                        <input type="date" id="start-date" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="end-date">结束日期：</label>
+                        <input type="date" id="end-date" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="stat-class">班级筛选：</label>
+                        <select id="stat-class">
+                            <option value="">全部班级</option>
+                        </select>
+                    </div>
+                    
+                    <button id="generate-stat">生成统计</button>
+                </div>
+                
+                <div class="statistics-result">
+                    <h2>统计结果</h2>
+                    <div id="statistics-summary"></div>
+                    <div id="statistics-details"></div>
+                    
+                    <div class="notes-section">
+                        <h3>备注信息</h3>
+                        <textarea id="stat-notes" placeholder="可在此添加备注信息，如：26日加班一天等额外信息"></textarea>
+                    </div>
+                    
+                    <div class="export-buttons">
+                        <button id="export-excel" class="export-btn">导出Excel</button>
+                        <button id="export-pdf" class="export-btn">导出PDF</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+         <div id="settings-tab" class="tab-content">
+            <div class="settings-container">
+                <div class="settings-section">
+                    <h3>班级设置</h3>
+                    <div class="settings-items" id="class-settings">
+                        <div class="settings-input-group">
+                            <input type="text" id="new-class" placeholder="新增班级">
+                            <button id="add-class">添加</button>
+                        </div>
+                        <ul class="settings-list" id="class-list"></ul>
+                    </div>
+                </div>
+                
+                <div class="settings-section">
+                    <h3>课程设置</h3>
+                    <div class="settings-items" id="course-settings">
+                        <div class="settings-input-group">
+                            <input type="text" id="new-course" placeholder="新增课程">
+                            <button id="add-course">添加</button>
+                        </div>
+                        <ul class="settings-list" id="course-list"></ul>
+                    </div>
+                </div>
+                
+                <div class="settings-section">
+                    <h3>课型设置</h3>
+                    <div class="settings-items" id="type-settings">
+                        <div class="settings-input-group">
+                            <input type="text" id="new-type" placeholder="新增课型">
+                            <button id="add-type">添加</button>
+                        </div>
+                        <ul class="settings-list" id="type-list"></ul>
+                    </div>
+                </div>
+                
+                <button id="save-settings" class="save-settings-btn">保存设置</button>
+            </div>
+        </div>
+        
+        <div class="tab-content" id="backup-tab">
+            <h2>数据备份与还原</h2>
+            <div class="backup-controls">
+                <button id="backup-btn" class="action-button">备份数据</button>
+                <button id="restore-btn" class="action-button">还原数据</button>
+            </div>
+            <div id="backup-status"></div>
+        </div>
+        
+        <div id="charts-tab" class="tab-content">
+    <div class="charts-container">
+        <div class="form-container">
+            <div class="form-group">
+                <label for="time-range">时间范围：</label>
+                <select id="time-range" class="chart-control">
+                    <option value="week">周视图</option>
+                    <option value="month">月视图</option>
+                    <option value="year">年视图</option>
+                </select>
+            </div>
+            <button id="refresh-chart" class="chart-control-btn">刷新图表</button>
+        </div>
+        
+        <div class="chart-result">
+            <h2>课时统计图表</h2>
+            <div class="chart-wrapper">
+                <canvas id="hours-chart"></canvas>
+            </div>
+        </div>
+    </div>
+        </div>
+
+    </div>
+    <script src="js/script.js"></script>
+</body>
+</html>
