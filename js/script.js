@@ -19,7 +19,11 @@ document.addEventListener('DOMContentLoaded', function() {
         courses: [],
         types: []
     };
+
     let chartInstance = null;
+    // 在全局变量部分添加
+    let currentPage = 1;
+    const recordsPerPage = 10; // 每页显示10条记录
     
     // DOM元素
     const dateInput = document.getElementById('date');
@@ -338,40 +342,42 @@ document.addEventListener('DOMContentLoaded', function() {
         DialogBridge.alert("设置已保存");
     }
     
-    // 保存记录函数
+    // 修改 saveRecord 函数，保存后重置到第一页
     function saveRecord() {
-        // 验证输入
-        if (!dateInput.value || !sessionInput.value || !classInput.value || !courseInput.value || !typeInput.value) {
-            DialogBridge.alert('请填写所有字段');
-            return;
+    // 验证输入
+    if (!dateInput.value || !sessionInput.value || !classInput.value || !courseInput.value || !typeInput.value) {
+        DialogBridge.alert('请填写所有字段');
+        return;
+    }
+    
+    const record = {
+        id: editingId || Date.now(),
+        date: dateInput.value,
+        session: sessionInput.value,
+        class: classInput.value,
+        course: courseInput.value,
+        type: typeInput.value
+    };
+    
+    if (editingId) {
+        // 更新现有记录
+        const index = records.findIndex(r => r.id === editingId);
+        if (index !== -1) {
+            records[index] = record;
         }
-        
-        const record = {
-            id: editingId || Date.now(),
-            date: dateInput.value,
-            session: sessionInput.value,
-            class: classInput.value,
-            course: courseInput.value,
-            type: typeInput.value
-        };
-        
-        if (editingId) {
-            // 更新现有记录
-            const index = records.findIndex(r => r.id === editingId);
-            if (index !== -1) {
-                records[index] = record;
-            }
-            editingId = null;
-            saveBtn.textContent = '保存记录';
-        } else {
-            // 添加新记录
-            records.push(record);
-        }
-        
-        // 保存并刷新
-        saveToLocal();
-        renderRecords();
-        resetForm();
+        editingId = null;
+        saveBtn.textContent = '保存记录';
+    } else {
+        // 添加新记录
+        records.push(record);
+        // 新增记录后显示第一页
+        currentPage = 1;
+    }
+    
+    // 保存并刷新
+    saveToLocal();
+    renderRecords();
+    resetForm();
     }
     
     // 保存到本地
@@ -379,31 +385,80 @@ document.addEventListener('DOMContentLoaded', function() {
         saveDataToAndroid(JSON.stringify(records));
     }
     
-    // 渲染记录列表
+    // 修改 renderRecords 函数
     function renderRecords() {
-        recordsList.innerHTML = ''; 
-        if (records.length === 0) {
-            recordsList.innerHTML = '<p>暂无记录</p>';
-            return;
-        }
-        // 按登记时间倒序排序（id是时间戳，大的排在前面）
-        records.sort((a, b) => b.id - a.id);
-        records.forEach(record => {
-            const recordElement = document.createElement('div');
-            recordElement.className = 'record-item';
-            recordElement.innerHTML = `
-                <div class="record-info">
+    recordsList.innerHTML = '';
+    if (records.length === 0) {
+        recordsList.innerHTML = '<p>暂无记录</p>';
+        return;
+    }
+    
+    // 按登记时间倒序排序（id是时间戳，大的排在前面）
+    records.sort((a, b) => b.id - a.id);
+    
+    // 计算总页数
+    const totalPages = Math.ceil(records.length / recordsPerPage);
+    
+    // 确保当前页在有效范围内
+    if (currentPage > totalPages && totalPages > 0) {
+        currentPage = totalPages;
+    }
+    
+    // 获取当前页的记录
+    const startIndex = (currentPage - 1) * recordsPerPage;
+    const endIndex = Math.min(startIndex + recordsPerPage, records.length);
+    const currentRecords = records.slice(startIndex, endIndex);
+    
+    // 渲染当前页记录
+    currentRecords.forEach(record => {
+        const recordElement = document.createElement('div');
+        recordElement.className = 'record-item';
+        recordElement.innerHTML = `
+            <div class="record-info">
                 <p><strong>日期：</strong>${record.date} <strong>节次：</strong>${record.session}</p>
                 <p><strong>班级：</strong>${record.class} <strong>课程：</strong>${record.course}</p>
                 <p><strong>课型：</strong>${record.type}</p>
-                </div>
-                <div class="record-actions">
+            </div>
+            <div class="record-actions">
                 <button class="edit" data-id="${record.id}">编辑</button>
                 <button class="delete" data-id="${record.id}">删除</button>
-                </div>
-                 `;
-            recordsList.appendChild(recordElement);
+            </div>
+        `;
+        recordsList.appendChild(recordElement);
     });
+    
+    // 添加分页控件
+    if (totalPages > 1) {
+        const pagination = document.createElement('div');
+        pagination.className = 'pagination';
+        
+        // 上一页按钮
+        const prevBtn = document.createElement('button');
+        prevBtn.textContent = '上一页';
+        prevBtn.disabled = currentPage === 1;
+        prevBtn.addEventListener('click', () => {
+            currentPage--;
+            renderRecords();
+        });
+        
+        // 页码信息
+        const pageInfo = document.createElement('span');
+        pageInfo.textContent = `第 ${currentPage} 页 / 共 ${totalPages} 页`;
+        
+        // 下一页按钮
+        const nextBtn = document.createElement('button');
+        nextBtn.textContent = '下一页';
+        nextBtn.disabled = currentPage === totalPages;
+        nextBtn.addEventListener('click', () => {
+            currentPage++;
+            renderRecords();
+        });
+        
+        pagination.appendChild(prevBtn);
+        pagination.appendChild(pageInfo);
+        pagination.appendChild(nextBtn);
+        recordsList.appendChild(pagination);
+    }
     
     // 添加删除和编辑事件
     document.querySelectorAll('.delete').forEach(btn => {
@@ -513,7 +568,7 @@ function getFilteredRecords(timeRange) {
         data: Object.values(grouped)
     };
 }
-// 生成统计数据
+// 修改 generateStatistics 函数中的记录排序
 function generateStatistics() {
     if (!startDateInput.value || !endDateInput.value) {
         DialogBridge.alert('请选择起始日期和结束日期');
@@ -529,12 +584,20 @@ function generateStatistics() {
         return;
     }
     
-    // 过滤记录
+    // 过滤记录并按日期和节次排序
     const filteredRecords = records.filter(record => {
         const recordDate = new Date(record.date);
         const dateMatch = recordDate >= startDate && recordDate <= endDate;
         const classMatch = !selectedClass || record.class === selectedClass;
         return dateMatch && classMatch;
+    }).sort((a, b) => {
+        // 先按日期排序
+        const dateCompare = new Date(a.date) - new Date(b.date);
+        if (dateCompare !== 0) return dateCompare;
+        
+        // 日期相同则按节次排序
+        const sessionOrder = { '12节': 1, '34节': 2, '56节': 3, '晚自习': 4 };
+        return sessionOrder[a.session] - sessionOrder[b.session];
     });
     
     if (filteredRecords.length === 0) {
@@ -556,6 +619,7 @@ function generateStatistics() {
     // 渲染统计结果
     renderStatistics(typeStats, filteredRecords);
 }
+
 // 渲染统计结果
 function renderStatistics(typeStats, records) {
     // 汇总统计
@@ -817,8 +881,6 @@ function initCharts() {
     renderCharts('week');
 }
 
-
-
 function renderCharts(timeRange) {
     const ctx = document.getElementById('hours-chart');
     const filteredRecords = getFilteredRecords(timeRange);
@@ -1053,3 +1115,9 @@ const DialogBridge = {
         }
     }
 };
+
+
+
+
+
+

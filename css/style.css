@@ -471,3 +471,24 @@ button:hover {
         height: 300px;
     }
 }
+
+/* 分页样式 */
+.pagination {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 10px;
+    margin-top: 20px;
+    padding: 10px;
+}
+
+.pagination button {
+    width: auto;
+    padding: 8px 16px;
+    margin: 0;
+}
+
+.pagination span {
+    font-size: 14px;
+    color: #555;
+}
