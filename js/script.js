@@ -1,3 +1,17 @@
+// 注册Service Worker
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js')
+      .then(registration => {
+        console.log('ServiceWorker注册成功: ', registration.scope);
+      })
+      .catch(err => {
+        console.log('ServiceWorker注册失败: ', err);
+      });
+  });
+}
+
+
 /**
  * 教师课时记录系统 - 重构版
  * 使用IIFE和命名空间模式组织代码，避免全局污染
@@ -1071,7 +1085,7 @@
             isIOS: () => /iPhone|iPad|iPod/i.test(navigator.userAgent),
 
             // 确认对话框
-            confirm: function(message) {
+            confirm: function(message){
                 // Android WebView 环境
                 if (this.isAndroidWebView()) {
                     return new Promise((resolve) => {
@@ -1101,7 +1115,7 @@
             },
             
             // 提示框
-            alert: function(message) {
+            alert: function(message){
                 if (this.isAndroidWebView()) {
                     return new Promise((resolve) => {
                         const callbackName = `alert_cb_${Date.now()}`;
