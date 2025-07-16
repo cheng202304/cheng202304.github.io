@@ -84,11 +84,15 @@
                     </select>
                 </div>
                 
-                <button id="save-btn">保存记录</button>
+                <div class="form-group">
+                    <button id="save-btn">保存记录</button>
+                    <button id="clear-form">全部清空</button>
+                </div>
             </div>
             
             <div class="records-container">
                 <h2>已登记课时</h2>
+                <!-- 记录总数和最新通知将在这里动态添加 -->
                 <div id="records-list"></div>
             </div>
         </div>
@@ -180,6 +184,15 @@
                 <button id="restore-btn" class="action-button">还原数据</button>
             </div>
             <div id="backup-status"></div>
+
+            <!-- 在设置或管理标签页中添加 -->
+            <div class="danger-zone">
+                <h3>危险操作区</h3>
+                <button id="clear-all-records" class="btn btn-danger">
+                <i class="icon-trash"></i> 清空所有课时记录
+                </button>
+                <p class="help-text">此操作将永久删除所有课时记录，请谨慎使用！</p>
+            </div>
         </div>
         
         <div id="charts-tab" class="tab-content">

@@ -11,7 +11,14 @@ if ('serviceWorker' in navigator) {
   });
 }
 
-
+/**
+ * 教师课时记录系统 - 增强版
+ * 功能：
+ * 1. 重复数据检测（日期+班级+节次）
+ * 2. 智能推荐（基于频率统计）
+ * 3. 数据验证与异常检测
+ * 4. 全部清空功能
+ */
 /**
  * 教师课时记录系统 - 重构版
  * 使用IIFE和命名空间模式组织代码，避免全局污染
@@ -29,6 +36,21 @@ if ('serviceWorker' in navigator) {
                 classes: ["23对口计算机", "23春电子商务", "24春电子商务", "23秋电子商务一"],
                 courses: ["网页设计", "网站建设与维护", "计算机网络技术", "计算机应用基础"],
                 types: ["理论课", "实训课", "复习课"]
+            },
+            
+            recommendation: {
+                maxSuggestions: 3, // 最多显示推荐项数量
+                decayFactor: 0.95, // 频率衰减因子(旧记录权重降低)
+                minFrequency: 0.1, // 最小频率阈值
+                contextMatchBonus: 1.5, // 上下文匹配加分
+                recentDays: 30 // 近期记录的天数范围
+            },
+            validationRules: {
+                date: /^\d{4}-\d{2}-\d{2}$/,
+                session: /^(12节|34节|56节|晚自习)$/,
+                class: /^.{1,50}$/,
+                course: /^.{1,50}$/,
+                type: /^.{1,20}$/
             }
         },
         
@@ -38,7 +60,16 @@ if ('serviceWorker' in navigator) {
             editingId: null,
             settings: {},
             chartInstance: null,
-            currentPage: 1
+            currentPage: 1,
+
+            frequencyStats: {
+                classes: {},
+                courses: {},
+                types: {},
+                classCoursePairs: {}, // 班级-课程组合频率
+                courseTypePairs: {} // 课程-课型组合频率
+            },
+            lastRecommendationUpdate: null
         },
         
         // DOM元素缓存
@@ -53,6 +84,456 @@ if ('serviceWorker' in navigator) {
             this.loadSettings();
             this.initStatistics();
             this.initCharts();
+
+            this.analyzeUsageFrequency(); // 新增：分析使用频率
+            this.setupRecommendationListeners(); // 新增：设置推荐监听器
+            this.initStatusDisplay(); // 新增：初始化状态显示
+        },
+
+        // 新增：初始化状态显示
+        initStatusDisplay: function() {
+            this.updateTotalRecordsCount();
+            this.renderRecords();
+            this.displayLastRecordInfo();
+        },
+
+        // 新增：显示最后一条记录信息
+        displayLastRecordInfo: function() {
+    const formContainer = document.querySelector('.form-container');
+    let lastRecordInfo = document.getElementById('last-record-info');
+    
+    // 如果元素不存在则创建
+    if (!lastRecordInfo) {
+        lastRecordInfo = document.createElement('div');
+        lastRecordInfo.id = 'last-record-info';
+        lastRecordInfo.className = 'last-record-info';
+        formContainer.insertBefore(lastRecordInfo, formContainer.firstChild);
+    }
+    
+    if (this.state.records.length === 0) {
+        lastRecordInfo.innerHTML = '<p>暂无记录</p>';
+        return;
+    }
+    
+    // 获取最新记录
+    const lastRecord = this.state.records.reduce((prev, current) => 
+        (prev.id > current.id) ? prev : current
+    );
+    
+    lastRecordInfo.innerHTML = `
+        <div class="last-record-summary">
+            <h3>最后一条记录</h3>
+            <div class="record-details">
+                <p><span class="detail-label">日期:</span> ${lastRecord.date}</p>
+                <p><span class="detail-label">节次:</span> ${lastRecord.session}</p>
+                <p><span class="detail-label">班级:</span> ${lastRecord.class}</p>
+                <p><span class="detail-label">课程:</span> ${lastRecord.course}</p>
+                <p><span class="detail-label">课型:</span> ${lastRecord.type}</p>
+            </div>
+        </div>
+    `;
+        },
+
+        // 新增：更新记录总数显示
+        /*
+        updateTotalRecordsCount: function() {
+    const countElement = document.getElementById('records-count');
+    if (!countElement) {
+        // 如果没有状态显示元素，创建一个
+        const recordsContainer = document.querySelector('.records-container');
+        const countDiv = document.createElement('div');
+        countDiv.id = 'records-count';
+        countDiv.className = 'records-count';
+        countDiv.style.marginBottom = '10px';
+        countDiv.style.fontWeight = 'bold';
+        recordsContainer.insertBefore(countDiv, recordsContainer.firstChild);
+    }
+    document.getElementById('records-count').textContent = `总记录数: ${this.state.records.length}`;
+        },
+        */
+
+        // 修改 updateTotalRecordsCount 方法
+        updateTotalRecordsCount: function() {
+    const recordsContainer = document.querySelector('.records-container');
+    let countElement = document.getElementById('records-count');
+    
+    if (!countElement) {
+        countElement = document.createElement('div');
+        countElement.id = 'records-count';
+        countElement.className = 'records-count';
+        recordsContainer.insertBefore(countElement, recordsContainer.firstChild);
+    }
+    
+    countElement.innerHTML = `
+        <div class="count-container">
+            <span class="count-icon">📊</span>
+            <span class="count-text">总记录数: ${this.state.records.length}</span>
+        </div>
+    `;
+    
+    // 在保存记录后调用 displayLastRecordInfo
+    if (this.state.records.length > 0) {
+        this.displayLastRecordInfo();
+    }
+        },
+
+         // 新增：分析使用频率
+        analyzeUsageFrequency: function() {
+            const now = new Date();
+            const cutoffDate = new Date();
+            cutoffDate.setDate(now.getDate() - this.config.recommendation.recentDays);
+            
+            // 初始化频率统计
+            this.state.frequencyStats = {
+                classes: {},
+                courses: {},
+                types: {},
+                classCoursePairs: {},
+                courseTypePairs: {}
+            };
+            
+            // 分析记录
+            this.state.records.forEach(record => {
+                const recordDate = new Date(record.date);
+                const isRecent = recordDate >= cutoffDate;
+                const timeWeight = isRecent ? 1 : Math.pow(
+                    this.config.recommendation.decayFactor, 
+                    Math.floor((now - recordDate) / (24 * 60 * 60 * 1000))
+                );
+                
+                // 统计班级频率
+                this.state.frequencyStats.classes[record.class] = 
+                    (this.state.frequencyStats.classes[record.class] || 0) + timeWeight;
+                
+                // 统计课程频率
+                this.state.frequencyStats.courses[record.course] = 
+                    (this.state.frequencyStats.courses[record.course] || 0) + timeWeight;
+                
+                // 统计课型频率
+                this.state.frequencyStats.types[record.type] = 
+                    (this.state.frequencyStats.types[record.type] || 0) + timeWeight;
+                
+                // 统计班级-课程组合频率
+                const classCourseKey = `${record.class}|${record.course}`;
+                this.state.frequencyStats.classCoursePairs[classCourseKey] = 
+                    (this.state.frequencyStats.classCoursePairs[classCourseKey] || 0) + timeWeight;
+                
+                // 统计课程-课型组合频率
+                const courseTypeKey = `${record.course}|${record.type}`;
+                this.state.frequencyStats.courseTypePairs[courseTypeKey] = 
+                    (this.state.frequencyStats.courseTypePairs[courseTypeKey] || 0) + timeWeight;
+            });
+            
+            this.state.lastRecommendationUpdate = now;
+           
+        },
+        
+        // 新增：设置推荐监听器
+        setupRecommendationListeners: function() {
+            //日期为焦点时，推荐日期
+            this.elements.dateInput.addEventListener('focus', () => {
+                    this.updateDateRecommendation();
+            });
+
+            //节次为焦点时，推荐节次
+            this.elements.sessionInput.addEventListener('focus', () => {
+                    this.updateSessionRecommendation();
+            });
+            // 班级输入变化时推荐课程
+            this.elements.classInput.addEventListener('change', () => {
+                this.updateCourseRecommendations();
+            });
+            
+            // 班级输入获得焦点时也推荐
+            this.elements.classInput.addEventListener('focus', () => {
+                this.updateClassRecommendations();
+            });
+
+            // 课程输入变化时推荐课型
+            this.elements.courseInput.addEventListener('change', () => {
+                this.updateTypeRecommendations();
+            });
+            
+            // 初始化推荐
+            this.updateClassRecommendations();
+        },
+        
+        //新增：更新日期推荐
+        /*
+        updateDateRecommendation: function() {
+            if (this.state.records.length === 0) {
+                // 如果没有记录，默认今天和12节
+                const today = new Date().toISOString().split('T')[0];
+                this.elements.dateInput.value = today;
+                this.elements.sessionInput.value = '12节';
+                return;
+            }
+    
+            // 获取最新记录
+            const lastRecord = this.state.records.reduce((prev, current) => 
+                    (prev.id > current.id) ? prev : current
+            );
+    
+             const lastDate = new Date(lastRecord.date);
+             const currentDate = new Date(this.elements.dateInput.value || new Date());
+    
+            // 如果日期不同，是新的一天
+            if (lastDate.toDateString() !== currentDate.toDateString()) {
+                this.elements.sessionInput.value = '12节';
+                return;
+            }
+
+             const lastSession = lastRecord.session;
+    
+            // 如果上一条记录是56节，则推荐下一天
+            if (lastSession === '56节') {
+                    const nextDate = new Date(lastDate);
+                    nextDate.setDate(lastDate.getDate() + 1);
+                    this.elements.dateInput.value = nextDate.toISOString().split('T')[0];
+                    this.elements.sessionInput.value = '12节'; // 新的一天默认12节
+            } else {
+            // 否则推荐同一天
+                this.elements.dateInput.value = lastRecord.date;
+                // 根据上一条记录的节次推荐下一节次
+                switch(lastSession) {
+                    case '12节':
+                        this.elements.sessionInput.value = '34节';
+                        break;
+                    case '34节':
+                        this.elements.sessionInput.value = '56节';
+                        break;
+                    case '56节':
+                        this.elements.sessionInput.value = '';
+                        break;
+                    default:
+                        this.elements.sessionInput.value = '12节';
+                }
+            }
+        },
+        */
+
+        updateDateRecommendation: function() {
+    if (this.state.records.length === 0) {
+        // 如果没有记录，默认今天和12节
+        const today = new Date().toISOString().split('T')[0];
+        this.elements.dateInput.value = today;
+        this.elements.sessionInput.value = '12节';
+        return;
+    }
+
+    // 获取最新记录
+    const lastRecord = this.state.records.reduce((prev, current) => 
+        (prev.id > current.id) ? prev : current
+    );
+    
+    const lastDate = new Date(lastRecord.date);
+    const lastSession = lastRecord.session;
+
+    // 如果上一条记录是56节，则推荐下一个工作日
+    if (lastSession === '56节') {
+        const nextDate = new Date(lastDate);
+        nextDate.setDate(lastDate.getDate() + 1);
+        
+        // 跳过周末
+        while (nextDate.getDay() === 0 || nextDate.getDay() === 6) {
+            nextDate.setDate(nextDate.getDate() + 1);
+        }
+        
+        this.elements.dateInput.value = nextDate.toISOString().split('T')[0];
+        this.elements.sessionInput.value = '12节'; // 新的一天默认12节
+    } else {
+        // 否则推荐同一天
+        this.elements.dateInput.value = lastRecord.date;
+        // 根据上一条记录的节次推荐下一节次
+        switch(lastSession) {
+            case '12节':
+                this.elements.sessionInput.value = '34节';
+                break;
+            case '34节':
+                this.elements.sessionInput.value = '56节';
+                break;
+            case '56节':
+                this.elements.sessionInput.value = '';
+                break;
+            default:
+                this.elements.sessionInput.value = '12节';
+        }
+    }
+},
+        
+        //新增： 更新节次推荐
+        updateSessionRecommendation: function() {
+    if (this.state.records.length === 0) return;
+    
+    // 获取最新记录
+    const lastRecord = this.state.records.reduce((prev, current) => 
+        (prev.id > current.id) ? prev : current
+    );
+    
+    const lastSession = lastRecord.session;
+    
+    // 根据上一条记录的节次推荐下一节次
+    switch(lastSession) {
+        case '12节':
+            this.elements.sessionInput.value = '34节';
+            break;
+        case '34节':
+            this.elements.sessionInput.value = '56节';
+            break;
+        case '56节':
+            // 56节后不推荐晚自习，保持为空
+            this.elements.sessionInput.value = '';
+            break;
+        default:
+            this.elements.sessionInput.value = '12节';
+    }
+        },
+
+         // 新增：更新班级推荐
+        updateClassRecommendations: function() {
+            const recommendations = this.getTopRecommendations('classes');
+            this.showRecommendations(this.elements.classInput, recommendations);
+        },
+        
+        // 新增：更新课程推荐（基于班级上下文）
+        updateCourseRecommendations: function() {
+            const selectedClass = this.elements.classInput.value;
+            let recommendations = [];
+            
+            if (selectedClass) {
+                // 获取该班级最常使用的课程
+                const classCourses = {};
+                Object.keys(this.state.frequencyStats.classCoursePairs).forEach(key => {
+                    const [cls, course] = key.split('|');
+                    if (cls === selectedClass) {
+                        classCourses[course] = this.state.frequencyStats.classCoursePairs[key];
+                    }
+                });
+                
+                // 如果没有班级特定的课程数据，回退到全局推荐
+                if (Object.keys(classCourses).length > 0) {
+                    recommendations = Object.entries(classCourses)
+                        .sort((a, b) => b[1] - a[1])
+                        .slice(0, this.config.recommendation.maxSuggestions)
+                        .map(([course]) => course);
+                }
+            }
+            
+            // 如果没找到上下文相关推荐或没有选择班级，使用全局推荐
+            if (recommendations.length === 0) {
+                recommendations = this.getTopRecommendations('courses');
+            }
+            
+            this.showRecommendations(this.elements.courseInput, recommendations);
+        },
+
+        // 新增：更新课型推荐（基于课程上下文）
+        updateTypeRecommendations: function() {
+            const selectedCourse = this.elements.courseInput.value;
+            let recommendations = [];
+            
+            if (selectedCourse) {
+                // 获取该课程最常使用的课型
+                const courseTypes = {};
+                Object.keys(this.state.frequencyStats.courseTypePairs).forEach(key => {
+                    const [course, type] = key.split('|');
+                    if (course === selectedCourse) {
+                        courseTypes[type] = this.state.frequencyStats.courseTypePairs[key];
+                    }
+                });
+                
+                // 如果没有课程特定的课型数据，回退到全局推荐
+                if (Object.keys(courseTypes).length > 0) {
+                    recommendations = Object.entries(courseTypes)
+                        .sort((a, b) => b[1] - a[1])
+                        .slice(0, this.config.recommendation.maxSuggestions)
+                        .map(([type]) => type);
+                }
+            }
+            
+            // 如果没找到上下文相关推荐或没有选择课程，使用全局推荐
+            if (recommendations.length === 0) {
+                recommendations = this.getTopRecommendations('types');
+            }
+            
+            this.showRecommendations(this.elements.typeInput, recommendations);
+        },
+        
+        // 新增：获取最高频的推荐项
+        getTopRecommendations: function(category) {
+            return Object.entries(this.state.frequencyStats[category])
+                .filter(([_, freq]) => freq >= this.config.recommendation.minFrequency)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, this.config.recommendation.maxSuggestions)
+                .map(([item]) => item);
+        },
+
+         // 新增：显示推荐项
+        showRecommendations: function(inputElement, recommendations) {
+            // 移除旧的推荐
+            const existingRecommendations = inputElement.parentNode.querySelector('.recommendations');
+            if (existingRecommendations) {
+                existingRecommendations.remove();
+            }
+            
+            if (recommendations.length === 0 || inputElement.value) {
+                return;
+            }
+            
+            // 创建推荐容器
+            const container = document.createElement('div');
+            container.className = 'recommendations';
+            
+            // 添加推荐项
+            recommendations.forEach(item => {
+                const rec = document.createElement('span');
+                rec.className = 'recommendation-item';
+                rec.textContent = item;
+                rec.addEventListener('click', () => {
+                    inputElement.value = item;
+                    container.remove();
+                    
+                    // 触发change事件以更新后续推荐
+                    inputElement.dispatchEvent(new Event('change'));
+                    
+                });
+                container.appendChild(rec);
+            });
+            
+            // 添加到DOM
+            inputElement.parentNode.appendChild(container);
+        },
+
+        // 新增：更新频率统计
+        updateFrequencyStats: function(record) {
+            // 更新班级频率
+            this.state.frequencyStats.classes[record.class] = 
+                (this.state.frequencyStats.classes[record.class] || 0) + 1;
+            
+            // 更新课程频率
+            this.state.frequencyStats.courses[record.course] = 
+                (this.state.frequencyStats.courses[record.course] || 0) + 1;
+            
+            // 更新课型频率
+            this.state.frequencyStats.types[record.type] = 
+                (this.state.frequencyStats.types[record.type] || 0) + 1;
+            
+            // 更新班级-课程组合频率
+            const classCourseKey = `${record.class}|${record.course}`;
+            this.state.frequencyStats.classCoursePairs[classCourseKey] = 
+                (this.state.frequencyStats.classCoursePairs[classCourseKey] || 0) + 1;
+            
+            // 更新课程-课型组合频率
+            const courseTypeKey = `${record.course}|${record.type}`;
+            this.state.frequencyStats.courseTypePairs[courseTypeKey] = 
+                (this.state.frequencyStats.courseTypePairs[courseTypeKey] || 0) + 1;
+            
+            // 定期重新分析频率（避免频繁计算）
+            const now = new Date();
+            if (!this.state.lastRecommendationUpdate || 
+                (now - this.state.lastRecommendationUpdate) > (24 * 60 * 60 * 1000)) {
+                this.analyzeUsageFrequency();
+            }
         },
         
         // 缓存DOM元素
@@ -66,9 +547,11 @@ if ('serviceWorker' in navigator) {
                 sessionInput: document.getElementById('session'),
                 classInput: document.getElementById('class'),
                 courseInput: document.getElementById('course'),
-                typeInput: document.getElementById('type'),
-                saveBtn: document.getElementById('save-btn'),
+                typeInput: document.getElementById('type'),            
                 recordsList: document.getElementById('records-list'),
+                saveBtn: document.getElementById('save-btn'),
+                clearFormBtn: document.getElementById('clear-form'), // 清空按钮
+
                 
                 // 设置元素
                 newClassInput: document.getElementById('new-class'),
@@ -99,7 +582,9 @@ if ('serviceWorker' in navigator) {
                 restoreBtn: document.getElementById('restore-btn'),
                 backupStatus: document.getElementById('backup-status'),
                 tabBtns: document.querySelectorAll('.tab-btn'),
-                tabContents: document.querySelectorAll('.tab-content')
+                tabContents: document.querySelectorAll('.tab-content'), 
+                //绑定清空所有记录按钮 
+                clearAllBtn: document.getElementById('clear-all-records'),          
             };
             
             // 设置默认日期为今天
@@ -123,6 +608,8 @@ if ('serviceWorker' in navigator) {
             
             // 保存记录按钮
             this.elements.saveBtn.addEventListener('click', this.saveRecord.bind(this));
+             // 新增事件
+            this.elements.clearFormBtn.addEventListener('click', this.clearForm.bind(this));
             
             // 设置相关按钮
             this.elements.addClassBtn.addEventListener('click', () => 
@@ -148,6 +635,8 @@ if ('serviceWorker' in navigator) {
             this.elements.generateStatBtn.addEventListener('click', this.generateStatistics.bind(this));
             this.elements.exportExcelBtn.addEventListener('click', this.exportToExcel.bind(this));
             this.elements.exportPdfBtn.addEventListener('click', this.exportToPdf.bind(this));
+            //绑定清空所有记录按钮
+            this.elements.clearAllBtn.addEventListener('click', this.clearAllRecords.bind(this));
         },
         
         // 显示启动动画
@@ -182,6 +671,7 @@ if ('serviceWorker' in navigator) {
                 try {
                     this.state.records = JSON.parse(savedData) || [];
                     this.renderRecords();
+                    this.analyzeUsageFrequency(); // 新增：加载数据后分析频率
                 } catch (e) {
                     console.error("Error parsing data:", e);
                     this.state.records = [];
@@ -213,6 +703,7 @@ if ('serviceWorker' in navigator) {
         },
         
         // 保存记录
+        /*
         saveRecord: function() {
             // 验证输入
             if (!this.elements.dateInput.value || !this.elements.sessionInput.value || 
@@ -243,6 +734,8 @@ if ('serviceWorker' in navigator) {
                 // 添加新记录
                 this.state.records.push(record);
                 this.state.currentPage = 1; // 新增记录后显示第一页
+                // 新增：更新频率统计
+                this.updateFrequencyStats(record);
             }
             
             // 保存并刷新
@@ -250,7 +743,159 @@ if ('serviceWorker' in navigator) {
             this.renderRecords();
             this.resetForm();
         },
+        */
+         // 保存记录（增强版）
+        saveRecord: async function() {
+            try {
+                // 验证必填字段
+                if (!this.validateRequiredFields()) return;
+                
+                // 验证数据格式
+                if (!this.validateFieldFormats()) return;
+                
+                // 检查重复记录
+                if (await this.checkDuplicateRecord()) return;
+                
+                const record = {
+                    id: this.state.editingId || Date.now(),
+                    date: this.elements.dateInput.value,
+                    session: this.elements.sessionInput.value,
+                    class: this.elements.classInput.value,
+                    course: this.elements.courseInput.value,
+                    type: this.elements.typeInput.value
+                };
+                
+                if (this.state.editingId) {
+                    // 更新现有记录
+                    const index = this.state.records.findIndex(r => r.id === this.state.editingId);
+                    if (index !== -1) {
+                        this.state.records[index] = record;
+                    }
+                    this.state.editingId = null;
+                    this.elements.saveBtn.textContent = '保存记录';
+                } else {
+                    // 添加新记录
+                    this.state.records.push(record);
+                    this.state.currentPage = 1;
+                    this.updateFrequencyStats(record); // 更新频率统计
+                    // 新增：显示最新记录提示
+                    this.showLatestRecordNotification(record);
+                }
+                
+                // 保存并刷新
+                this.Storage.saveData(JSON.stringify(this.state.records));
+                this.renderRecords();
+                this.resetForm();
+                this.updateTotalRecordsCount(); // 更新记录总数
+                
+            } catch (error) {
+                console.error("保存记录出错:", error);
+                this.Dialog.alert("保存记录时出错: " + error.message);
+            }
+        },
+
+        // 新增：显示最新记录提示
+        showLatestRecordNotification: function(record) {
+    const notification = document.createElement('div');
+    notification.className = 'record-notification';
+    notification.innerHTML = `
+        <p>已添加: ${record.date} ${record.session} ${record.class} ${record.course}</p>
+    `;
+    
+    const recordsContainer = document.querySelector('.records-container');
+    recordsContainer.insertBefore(notification, recordsContainer.firstChild);
+    
+    // 3秒后自动消失
+    setTimeout(() => {
+        notification.style.opacity = '0';
+        setTimeout(() => notification.remove(), 500);
+    }, 3000);
+        },
+
+         // 新增：验证必填字段
+        validateRequiredFields: function() {
+            const requiredFields = [
+                { field: this.elements.dateInput, name: '日期' },
+                { field: this.elements.sessionInput, name: '节次' },
+                { field: this.elements.classInput, name: '班级' },
+                { field: this.elements.courseInput, name: '课程' },
+                { field: this.elements.typeInput, name: '课型' }
+            ];
+            
+            const missingFields = requiredFields.filter(item => !item.field.value);
+            
+            if (missingFields.length > 0) {
+                this.Dialog.alert(`请填写以下字段: ${missingFields.map(f => f.name).join('、')}`);
+                return false;
+            }
+            
+            return true;
+        },
         
+        // 新增：验证字段格式
+        validateFieldFormats: function() {
+            const validations = [
+                { field: this.elements.dateInput, rule: this.config.validationRules.date, name: '日期', example: 'YYYY-MM-DD' },
+                { field: this.elements.sessionInput, rule: this.config.validationRules.session, name: '节次', example: '12节、34节、56节或晚自习' },
+                { field: this.elements.classInput, rule: this.config.validationRules.class, name: '班级', example: '1-50个字符' },
+                { field: this.elements.courseInput, rule: this.config.validationRules.course, name: '课程', example: '1-50个字符' },
+                { field: this.elements.typeInput, rule: this.config.validationRules.type, name: '课型', example: '1-20个字符' }
+            ];
+            
+            const invalidFields = validations.filter(item => !item.rule.test(item.field.value));
+            
+            if (invalidFields.length > 0) {
+                const errorMsg = invalidFields.map(item => 
+                    `${item.name}格式不正确，应为: ${item.example}`
+                ).join('\n');
+                
+                this.Dialog.alert(errorMsg);
+                return false;
+            }
+            
+            return true;
+        },
+        
+        // 修改 checkDuplicateRecord 方法
+        checkDuplicateRecord: async function() {
+    // 编辑现有记录时不检查重复
+    if (this.state.editingId) return false;
+    
+    const date = this.elements.dateInput.value;
+    const session = this.elements.sessionInput.value;
+    
+    const isDuplicate = this.state.records.some(record => 
+        record.date === date && 
+        record.session === session
+    );
+    
+    if (isDuplicate) {
+        const confirmed = await this.Dialog.confirm(
+            "已存在相同日期和节次的记录，确定要重复添加吗？"
+        );
+        return !confirmed; // 如果用户确认，返回false(不阻止保存)
+    }
+    
+    return false;
+        },
+
+        // 新增：清空表单
+        clearForm: async function() {
+            try {
+                // 如果表单有内容，需要确认
+                if (this.elements.sessionInput.value || this.elements.classInput.value || 
+                    this.elements.courseInput.value || this.elements.typeInput.value) {
+                    const confirmed = await this.Dialog.confirm("确定要清空当前表单内容吗？");
+                    if (!confirmed) return;
+                }
+                
+                this.resetForm();
+            } catch (error) {
+                console.error("清空表单出错:", error);
+                this.Dialog.alert("清空表单时出错: " + error.message);
+            }
+        },
+
         // 重置表单
         resetForm: function() {
             const today = new Date().toISOString().split('T')[0];
@@ -1016,21 +1661,94 @@ if ('serviceWorker' in navigator) {
             input.click();
         },
         
+        /**
+        * 清空所有课时记录
+        */
+        clearAllRecords: async function() {
+    try {
+        // 确认对话框
+        const confirmed = await this.Dialog.confirm(
+            "确定要清空所有课时记录吗？此操作不可恢复！\n\n" +
+            "将删除全部 " + this.state.records.length + " 条记录。"
+        );
+        
+        if (!confirmed) { return;}
+        
+        // 二次确认
+        const doubleConfirmed = await this.Dialog.confirm(
+            "请再次确认！\n" +
+            "这将永久删除所有 " + this.state.records.length + " 条课时记录。\n" +
+            "输入'确认清空'以继续:",
+            { 
+                input: true, 
+                inputPlaceholder: "输入'确认清空'",
+                inputValidator: (value) => value === '确认清空'
+            }
+        );
+        
+        if (!doubleConfirmed) {   return;   }
+        
+        // 执行清空
+        this.state.records = [];
+        this.state.currentPage = 1;
+        this.Storage.saveData(JSON.stringify(this.state.records));
+        this.renderRecords();
+        
+        // 重置频率统计
+        this.state.frequencyStats = {
+            classes: {},
+            courses: {},
+            types: {},
+            classCoursePairs: {},
+            courseTypePairs: {}
+        };
+        
+        this.Dialog.alert("所有课时记录已清空！");
+        
+    } catch (error) {
+        console.error("清空记录出错:", error);
+        this.Dialog.alert("清空记录时出错: " + error.message);
+    }
+        },
+       
+       
         // ==================== 应用关闭 ====================
         
         // 处理关闭应用
+        // 修改 handleCloseApp 方法
         handleCloseApp: function() {
-            try {
-                if (window.android && typeof window.android.closeApp === 'function') {
-                    window.android.closeApp(); // 调用Android接口
-                } else {
-                    alert('请在App内使用此功能');
-                }
-            } catch (e) {
-                console.error('JS接口调用失败:', e);
-            }
-
+    try {
+        // 尝试调用Android接口
+        if (window.android && typeof window.android.closeApp === 'function') {
+            window.android.closeApp();
+            return;
+        }
+        
+        // 尝试调用iOS接口
+        if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.closeApp) {
+            window.webkit.messageHandlers.closeApp.postMessage({});
+            return;
+        }
+        
+        // 通用浏览器处理
+        if (window.history.length > 1) {
+            window.history.back();
+        } else {
             window.close();
+        }
+    } catch (e) {
+        console.error('关闭应用出错:', e);
+        // 回退到最小化或隐藏界面
+        try {
+            if (window.document.exitFullscreen) {
+                window.document.exitFullscreen();
+            } else if (window.document.webkitExitFullscreen) {
+                window.document.webkitExitFullscreen();
+            }
+        } catch (err) {
+            console.error('退出全屏出错:', err);
+        }
+    }
         },
         
         // ==================== 工具方法 ====================
