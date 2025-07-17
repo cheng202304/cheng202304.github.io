@@ -1877,17 +1877,15 @@ if ('serviceWorker' in navigator) {
                     const db = await this.getDB();
                     if (db) {
                         await this.idbOperation('settings', (store) => {
-                            store.put({
+                           //确保返回put操作request对象
+                            return  store.put({
                                 id: 'appSettings',
                                 value: parsedSettings
                             });
                         });
-
                         // 同时保存到localStorage作为备份
                         localStorage.setItem('classSettings', settings);
-                        return;
                     }
-
                     // 回退到localStorage
                     console.log("回退到localStorage保存设置");
                     localStorage.setItem('classSettings', settings);
